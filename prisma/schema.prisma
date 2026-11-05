@@ -1,0 +1,858 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// 1. COMPANY, BRANCHES & SETTINGS
+// -------------------------------------------------------------
+model Company {
+  id             String       @id @default(uuid())
+  legalName      String       @default("Ace Legacy Services LLC")
+  dba            String       @default("Ace Legacy Services")
+  taxId          String?
+  mcNumber       String?
+  dotNumber      String?
+  address        String?
+  phone          String?
+  email          String?
+  website        String?
+  defaultCurrency String      @default("USD")
+  timezone       String       @default("America/New_York")
+  logoUrl        String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  branches       Branch[]
+  departments    Department[]
+  users          User[]
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  code      String   @unique
+  city      String?
+  state     String?
+  timezone  String   @default("America/New_York")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+}
+
+// -------------------------------------------------------------
+// 2. USERS, ROLES & DEPARTMENTS
+// -------------------------------------------------------------
+model Department {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String   // e.g. "Executive", "Sales", "Operations", "Dispatch", "Accounting", "HR"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+}
+
+model Shift {
+  id         String   @id @default(uuid())
+  name       String   // e.g. "Day Shift (8am-5pm)", "Night Dispatch"
+  startTime  String   // "08:00"
+  endTime    String   // "17:00"
+  timezone   String   @default("America/New_York")
+  graceMinutes Int    @default(15)
+  breakMinutes Int    @default(60)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  users      User[]
+}
+
+model User {
+  id              String        @id @default(uuid())
+  companyId       String?
+  company         Company?      @relation(fields: [companyId], references: [id])
+  branchId        String?
+  branch          Branch?       @relation(fields: [branchId], references: [id])
+  departmentId    String?
+  department      Department?   @relation(fields: [departmentId], references: [id])
+  shiftId         String?
+  shift           Shift?        @relation(fields: [shiftId], references: [id])
+
+  employeeId      String        @unique // e.g. "EMP-1001"
+  firstName       String
+  lastName        String
+  email           String        @unique
+  passwordHash    String
+  phone           String?
+  title           String?       // Job title
+  role            String        // "SUPER_ADMIN", "HR_MANAGER", "SALES_MANAGER", "SALES_AGENT", "OPERATIONS_MANAGER", "DISPATCHER", "ACCOUNTING_MANAGER", "ACCOUNTANT"
+  status          String        @default("ACTIVE") // "INVITED", "ACTIVE", "SUSPENDED", "DEACTIVATED"
+  avatarUrl       String?
+  hourlyRate      Float?        @default(0.0)
+  baseSalary      Float?        @default(0.0)
+  hireDate        DateTime?
+  managerId       String?
+  manager         User?         @relation("ManagerReports", fields: [managerId], references: [id])
+  directReports   User[]        @relation("ManagerReports")
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  attendances     Attendance[]
+  leaveRequests   LeaveRequest[]
+  assignedLeads   Lead[]        @relation("SalesAgentLeads")
+  createdQuotes   Quote[]       @relation("CreatedQuotes")
+  assignedLoads   BrokerageLoad[] @relation("AssignedBrokerageOps")
+  assignedDispatch DispatchLoad[] @relation("AssignedDispatchers")
+  tasksAssigned   Task[]        @relation("TaskAssignee")
+  tasksCreated    Task[]        @relation("TaskCreator")
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  commissions     Commission[]
+  expensesCreated Expense[]     @relation("ExpenseSubmitter")
+  expensesApproved Expense[]    @relation("ExpenseApprover")
+}
+
+// -------------------------------------------------------------
+// 3. HR, ATTENDANCE & LEAVE
+// -------------------------------------------------------------
+model Attendance {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date            DateTime // Normalized to midnight UTC
+  clockIn         DateTime
+  clockOut        DateTime?
+  breakMinutes    Int      @default(0)
+  totalHours      Float    @default(0.0)
+  overtimeHours   Float    @default(0.0)
+  status          String   @default("PRESENT") // "PRESENT", "LATE", "HALF_DAY", "ABSENT", "CORRECTION_REQUESTED"
+  notes           String?
+  ipAddress       String?
+  
+  // Correction workflow
+  correctionReason String?
+  requestedClockIn DateTime?
+  requestedClockOut DateTime?
+  correctionStatus String? // "PENDING", "APPROVED", "REJECTED"
+  correctedByUserId String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+model LeaveRequest {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveType   String   // "SICK", "CASUAL", "ANNUAL", "UNPAID", "MATERNITY"
+  startDate   DateTime
+  endDate     DateTime
+  totalDays   Float
+  reason      String
+  status      String   @default("PENDING") // "PENDING", "APPROVED", "REJECTED"
+  reviewedBy  String?
+  reviewNotes String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+// -------------------------------------------------------------
+// 4. CUSTOMERS / SHIPPERS & SALES CRM
+// -------------------------------------------------------------
+model Customer {
+  id            String   @id @default(uuid())
+  name          String   // Company legal name
+  dba           String?
+  type          String   @default("SHIPPER") // "SHIPPER", "BROKER_PARTNER", "MANUFACTURER"
+  mcNumber      String?
+  dotNumber     String?
+  address       String?
+  city          String?
+  state         String?
+  zip           String?
+  country       String   @default("USA")
+  phone         String?
+  email         String?
+  billingEmail  String?
+  creditLimit   Float    @default(25000.0)
+  paymentTerms  String   @default("NET_30") // "QUICK_PAY", "NET_7", "NET_15", "NET_30", "NET_60", "PREPAID"
+  status        String   @default("ACTIVE") // "ACTIVE", "CREDIT_HOLD", "INACTIVE"
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  contacts      CustomerContact[]
+  leads         Lead[]
+  quotes        Quote[]
+  brokerageLoads BrokerageLoad[]
+  invoices      Invoice[]
+
+  @@index([name])
+}
+
+model CustomerContact {
+  id          String   @id @default(uuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  firstName   String
+  lastName    String
+  title       String?  // e.g. "Logistics Coordinator", "AP Specialist"
+  email       String
+  phone       String?
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Lead {
+  id          String   @id @default(uuid())
+  leadNumber  String   @unique // e.g. "LEAD-1002"
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id])
+  companyName String   // If customer account not created yet
+  contactName String
+  email       String?
+  phone       String?
+  source      String   @default("COLD_CALL") // "WEBSITE", "COLD_CALL", "REFERRAL", "LOAD_BOARD", "INBOUND"
+  status      String   @default("NEW") // "NEW", "CONTACTED", "QUALIFIED", "PROPOSAL_SENT", "WON", "LOST"
+  salesAgentId String?
+  salesAgent  User?    @relation("SalesAgentLeads", fields: [salesAgentId], references: [id])
+  estimatedValue Float? @default(0.0)
+  notes       String?
+  lostReason  String?
+  nextFollowUp DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  quotes      Quote[]
+
+  @@index([salesAgentId, status])
+}
+
+// -------------------------------------------------------------
+// 5. QUOTES & MULTI-VERSION PRICING
+// -------------------------------------------------------------
+model Quote {
+  id              String        @id @default(uuid())
+  quoteNumber     String        @unique // e.g. "QT-2026-00101"
+  leadId          String?
+  lead            Lead?         @relation(fields: [leadId], references: [id])
+  customerId      String
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  createdById     String
+  createdBy       User          @relation("CreatedQuotes", fields: [createdById], references: [id])
+  currentVersion  Int           @default(1)
+  status          String        @default("DRAFT") // "DRAFT", "PENDING_INTERNAL_REVIEW", "SUBMITTED", "CUSTOMER_ACCEPTED", "CUSTOMER_REJECTED", "EXPIRED", "CONVERTED"
+  internalApprovalStatus String @default("APPROVED") // "PENDING", "APPROVED", "REJECTED"
+  approvedBy      String?
+  approvalNotes   String?
+
+  // High-level lane summary
+  originCity      String
+  originState     String
+  destCity        String
+  destState       String
+  equipment       String        // "DRY_VAN", "REEFER", "FLATBED", "STEP_DECK", "POWER_ONLY"
+  totalMiles      Float         @default(0.0)
+  
+  // Converted load tracking (1-to-1)
+  convertedLoadId String?       @unique
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  versions        QuoteVersion[]
+  convertedLoad   BrokerageLoad? @relation("QuoteToLoad")
+
+  @@index([customerId, status])
+}
+
+model QuoteVersion {
+  id              String   @id @default(uuid())
+  quoteId         String
+  quote           Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  versionNumber   Int      // 1, 2, 3
+  
+  customerRate    Float    // Price quoted to shipper
+  carrierEstimatedCost Float // Estimated cost to pay carrier
+  estimatedMargin Float    // customerRate - carrierEstimatedCost
+  marginPercentage Float   // (margin / customerRate) * 100
+  
+  fuelSurchargeIncluded Boolean @default(true)
+  accessorialCharges  Float     @default(0.0)
+  specialConditions   String?   // "Detention $50/hr after 2 hrs free"
+  validUntil          DateTime
+  
+  // Customer response evidence
+  customerDecision    String   @default("PENDING") // "PENDING", "ACCEPTED", "REJECTED", "COUNTER_OFFER"
+  decisionDate        DateTime?
+  acceptanceProofUrl  String?  // Signed confirmation file or email proof
+  counterOfferAmount  Float?
+  notes               String?
+
+  createdAt           DateTime @default(now())
+
+  @@unique([quoteId, versionNumber])
+}
+
+// -------------------------------------------------------------
+// 6. MOTOR CARRIERS & COMPLIANCE
+// -------------------------------------------------------------
+model Carrier {
+  id              String   @id @default(uuid())
+  legalName       String
+  dba             String?
+  mcNumber        String   @unique
+  dotNumber       String?
+  taxId           String?
+  address         String?
+  city            String?
+  state           String?
+  zip             String?
+  phone           String?
+  dispatchEmail   String?
+  accountingEmail String?
+  paymentTerms    String   @default("NET_30") // "QUICK_PAY_1_5", "NET_15", "NET_30"
+  quickPayDiscount Float   @default(0.0)      // e.g. 1.5%
+  status          String   @default("ACTIVE") // "ACTIVE", "PENDING_VERIFICATION", "DO_NOT_USE", "INACTIVE"
+  rating          Float    @default(5.0)
+  safetyScore     String?  // "SATISFACTORY", "CONDITIONAL"
+  insuranceCargoAmount Float @default(100000.0)
+  insuranceCargoExpiry DateTime?
+  insuranceAutoAmount  Float @default(1000000.0)
+  insuranceAutoExpiry  DateTime?
+  w9OnFile        Boolean  @default(false)
+  coiOnFile       Boolean  @default(false)
+  agreementOnFile Boolean  @default(false)
+  verifiedAt      DateTime?
+  verifiedBy      String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  contacts        CarrierContact[]
+  documents       CarrierDocument[]
+  offers          CarrierOffer[]
+  brokerageLoads  BrokerageLoad[]
+  payables        CarrierPayable[]
+
+  @@index([mcNumber])
+}
+
+model CarrierContact {
+  id          String   @id @default(uuid())
+  carrierId   String
+  carrier     Carrier  @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  name        String
+  title       String?  // "Dispatcher", "Safety Manager"
+  phone       String?
+  email       String
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CarrierDocument {
+  id          String   @id @default(uuid())
+  carrierId   String
+  carrier     Carrier  @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  docType     String   // "COI", "W9", "CARRIER_AGREEMENT", "AUTHORITY_LETTER"
+  fileName    String
+  fileUrl     String
+  fileSize    Int?
+  expiryDate  DateTime?
+  verified    Boolean  @default(false)
+  verifiedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// -------------------------------------------------------------
+// 7. BROKERAGE OPERATIONS & TMS LOADS
+// -------------------------------------------------------------
+model BrokerageLoad {
+  id              String        @id @default(uuid())
+  loadNumber      String        @unique // e.g. "BL-2026-00401"
+  quoteId         String?       @unique
+  quote           Quote?        @relation("QuoteToLoad", fields: [quoteId], references: [id])
+  customerId      String
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  assignedOpsId   String?
+  assignedOps     User?         @relation("AssignedBrokerageOps", fields: [assignedOpsId], references: [id])
+  customerRefNo   String?       // Shipper PO# or reference
+  equipment       String        // "DRY_VAN", "REEFER", "FLATBED", "STEP_DECK", "POWER_ONLY"
+  commodity       String?
+  weightLbs       Float?        @default(0.0)
+  palletCount     Int?          @default(0)
+  targetTempF     Float?        // Temperature for reefer loads
+  isHazmat        Boolean       @default(false)
+  totalMiles      Float         @default(0.0)
+  
+  // Financial breakdown
+  customerRate    Float         // Total freight charged to shipper
+  carrierRate     Float         @default(0.0) // Total contracted carrier pay
+  accessorialCustomer Float     @default(0.0) // Detention, layover, lumper billed to customer
+  accessorialCarrier  Float     @default(0.0) // Detention, lumper paid to carrier
+  grossMargin     Float         @default(0.0) // customerRate + accessorialCustomer - carrierRate - accessorialCarrier
+  marginPercent   Float         @default(0.0)
+
+  // Decoupled Status Dimensions
+  coverageStatus  String        @default("OPEN") // "OPEN", "CARRIER_SOURCING", "CARRIER_SELECTED", "RATE_CONFIRMED", "COVERED"
+  executionStatus String        @default("PENDING_DISPATCH") // "PENDING_DISPATCH", "DISPATCHED", "AT_PICKUP", "LOADED", "IN_TRANSIT", "AT_DELIVERY", "DELIVERED", "POD_VERIFIED", "CANCELLED"
+  financialStatus String        @default("UNBILLED") // "UNBILLED", "INVOICED", "PARTIALLY_PAID", "PAID_IN_FULL", "DISPUTED", "CLOSED"
+
+  // Carrier booking
+  carrierId       String?
+  carrier         Carrier?      @relation(fields: [carrierId], references: [id])
+  driverName      String?
+  driverPhone     String?
+  truckNumber     String?
+  trailerNumber   String?
+  rateConSignedUrl String?      // Signed Rate Confirmation document
+  podDocumentUrl  String?       // Uploaded clean Proof of Delivery
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  stops           LoadStop[]
+  offers          CarrierOffer[]
+  events          LoadEvent[]
+  exceptions      LoadException[]
+  invoices        Invoice[]
+  carrierPayables CarrierPayable[]
+  commissions     Commission[]
+
+  @@index([customerId, executionStatus])
+  @@index([carrierId, coverageStatus])
+}
+
+model LoadStop {
+  id              String        @id @default(uuid())
+  loadId          String
+  load            BrokerageLoad @relation(fields: [loadId], references: [id], onDelete: Cascade)
+  stopSequence    Int           // 1 = Origin, 2 = Next Stop / Final Consignee
+  stopType        String        // "PICKUP", "DELIVERY"
+  facilityName    String
+  address         String
+  city            String
+  state           String
+  zip             String
+  contactName     String?
+  contactPhone    String?
+  apptWindowStart DateTime
+  apptWindowEnd   DateTime
+  timezone        String        @default("America/New_York")
+  actualArrival   DateTime?
+  actualDeparture DateTime?
+  status          String        @default("PENDING") // "PENDING", "ARRIVED", "COMPLETED", "MISSED"
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([loadId, stopSequence])
+}
+
+model CarrierOffer {
+  id          String        @id @default(uuid())
+  loadId      String
+  load        BrokerageLoad @relation(fields: [loadId], references: [id], onDelete: Cascade)
+  carrierId   String
+  carrier     Carrier       @relation(fields: [carrierId], references: [id])
+  offeredRate Float
+  counterRate Float?
+  status      String        @default("OFFERED") // "OFFERED", "ACCEPTED", "DECLINED", "EXPIRED"
+  contactPerson String?
+  notes       String?
+  createdAt   DateTime      @default(now())
+}
+
+model LoadEvent {
+  id          String        @id @default(uuid())
+  loadId      String
+  load        BrokerageLoad @relation(fields: [loadId], references: [id], onDelete: Cascade)
+  eventType   String        // "CHECK_CALL", "STATUS_CHANGE", "RATE_CHANGE", "DISPATCH_INSTRUCTION"
+  location    String?
+  message     String
+  actorName   String
+  createdAt   DateTime      @default(now())
+}
+
+model LoadException {
+  id          String        @id @default(uuid())
+  loadId      String
+  load        BrokerageLoad @relation(fields: [loadId], references: [id], onDelete: Cascade)
+  severity    String        @default("MEDIUM") // "LOW", "MEDIUM", "HIGH", "CRITICAL"
+  type        String        // "LATE_PICKUP", "BREAKDOWN", "MISSED_APPT", "WEATHER", "CARGO_DAMAGE", "TONU"
+  title       String
+  description String
+  resolution  String?
+  status      String        @default("OPEN") // "OPEN", "INVESTIGATING", "RESOLVED"
+  resolvedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+// -------------------------------------------------------------
+// 8. DISPATCH DIVISION (OWNER-OPERATORS & FLEETS)
+// -------------------------------------------------------------
+model DispatchClient {
+  id              String   @id @default(uuid())
+  clientCode      String   @unique // e.g. "DC-101"
+  companyName     String
+  ownerName       String
+  mcNumber        String?
+  dotNumber       String?
+  phone           String
+  email           String
+  address         String?
+  feeType         String   @default("PERCENTAGE") // "PERCENTAGE", "FLAT_WEEKLY", "PER_LOAD"
+  feeValue        Float    @default(8.0) // 8% or $250 weekly
+  contractStart   DateTime
+  contractEnd     DateTime?
+  status          String   @default("ACTIVE") // "ACTIVE", "PAUSED", "TERMINATED"
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  trucks          Truck[]
+  dispatchLoads   DispatchLoad[]
+  feeStatements   Invoice[]
+
+  @@index([companyName, status])
+}
+
+model Truck {
+  id              String         @id @default(uuid())
+  clientId        String
+  client          DispatchClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  unitNumber      String         // e.g. "TRK-105"
+  vin             String?
+  trailerType     String         // "DRY_VAN", "REEFER", "FLATBED", "STEP_DECK", "POWER_ONLY"
+  trailerNumber   String?
+  maxWeightLbs    Float          @default(45000.0)
+  homeBaseCity    String?
+  homeBaseState   String?
+  status          String         @default("AVAILABLE") // "AVAILABLE", "UNDER_LOAD", "MAINTENANCE", "OFF_DUTY"
+  currentLocation String?
+  minRatePerMile  Float          @default(2.20)
+  maxDeadheadMiles Float         @default(100.0)
+  preferredLanes  String?        // "Midwest to Texas, Southeast"
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  drivers         Driver[]
+  dispatchLoads   DispatchLoad[]
+}
+
+model Driver {
+  id              String   @id @default(uuid())
+  truckId         String?
+  truck           Truck?   @relation(fields: [truckId], references: [id])
+  firstName       String
+  lastName        String
+  phone           String
+  email           String?
+  cdlNumber       String?
+  cdlState        String?
+  status          String   @default("ACTIVE") // "ACTIVE", "OFF_DUTY", "INACTIVE"
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  dispatchLoads   DispatchLoad[]
+}
+
+model DispatchLoad {
+  id              String         @id @default(uuid())
+  dispatchNumber  String         @unique // e.g. "DL-2026-00201"
+  clientId        String
+  client          DispatchClient @relation(fields: [clientId], references: [id])
+  truckId         String
+  truck           Truck          @relation(fields: [truckId], references: [id])
+  driverId        String?
+  driver          Driver?        @relation(fields: [driverId], references: [id])
+  dispatcherId    String?
+  dispatcher      User?          @relation("AssignedDispatchers", fields: [dispatcherId], references: [id])
+
+  brokerName      String         // External Freight Broker (e.g. C.H. Robinson, TQL, Echo)
+  brokerContact   String?
+  brokerPhone     String?
+  brokerRefNumber String?
+  
+  originCity      String
+  originState     String
+  destCity        String
+  destState       String
+  loadedMiles     Float          @default(0.0)
+  deadheadMiles   Float          @default(0.0)
+  grossFreightRate Float         // Carrier gross payment from broker
+  ratePerMile     Float          @default(0.0)
+
+  // Ace Legacy Services Dispatch Fee
+  feeType         String         @default("PERCENTAGE") // "PERCENTAGE", "FLAT_FEE"
+  feeRate         Float          @default(8.0)
+  calculatedFee   Float          // e.g. $3,000 * 8% = $240.00
+  
+  pickupDate      DateTime
+  deliveryDate    DateTime
+  status          String         @default("BOOKED") // "BOOKED", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "POD_COLLECTED", "BILLED", "CANCELLED"
+  feeBilled       Boolean        @default(false)
+  
+  podDocumentUrl  String?
+  rateConDocumentUrl String?
+  notes           String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  checkCalls      CheckCall[]
+  commissions     Commission[]
+
+  @@index([clientId, status])
+}
+
+model CheckCall {
+  id              String       @id @default(uuid())
+  dispatchLoadId  String
+  dispatchLoad    DispatchLoad @relation(fields: [dispatchLoadId], references: [id], onDelete: Cascade)
+  recordedAt      DateTime     @default(now())
+  location        String
+  statusUpdate    String       // "On schedule", "At shipper waiting for dock", "Delivered"
+  milesToDest     Float?
+  notes           String?
+}
+
+// -------------------------------------------------------------
+// 9. FINANCIAL ACCOUNTING: AR, AP, INVOICING & PAYMENTS
+// -------------------------------------------------------------
+model Invoice {
+  id              String        @id @default(uuid())
+  invoiceNumber   String        @unique // e.g. "INV-2026-00101" or "STMT-2026-0005"
+  division        String        @default("BROKERAGE") // "BROKERAGE" (Shipper AR) or "DISPATCH" (Client Service Fee)
+  
+  // Relations
+  customerId      String?
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  dispatchClientId String?
+  dispatchClient  DispatchClient? @relation(fields: [dispatchClientId], references: [id])
+  brokerageLoadId String?
+  brokerageLoad   BrokerageLoad? @relation(fields: [brokerageLoadId], references: [id])
+
+  issueDate       DateTime      @default(now())
+  dueDate         DateTime
+  paymentTerms    String        @default("NET_30")
+  
+  subtotal        Float         @default(0.0)
+  accessorialTotal Float        @default(0.0)
+  totalAmount     Float         @default(0.0)
+  amountPaid      Float         @default(0.0)
+  balanceDue      Float         @default(0.0)
+  
+  status          String        @default("UNPAID") // "DRAFT", "SENT", "PARTIALLY_PAID", "PAID_IN_FULL", "OVERDUE", "DISPUTED", "CANCELLED"
+  notes           String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  lines           InvoiceLine[]
+  paymentAllocations PaymentAllocation[]
+
+  @@index([division, status])
+  @@index([dueDate])
+}
+
+model InvoiceLine {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String   // "Linehaul Freight", "Fuel Surcharge", "Detention - 2 hrs", "Dispatch Service Fee (8%)"
+  quantity    Float    @default(1.0)
+  unitPrice   Float
+  total       Float
+  createdAt   DateTime @default(now())
+}
+
+model Payment {
+  id              String   @id @default(uuid())
+  paymentNumber   String   @unique // e.g. "PMT-2026-00101"
+  division        String   @default("BROKERAGE") // "BROKERAGE", "DISPATCH"
+  paymentMethod   String   @default("ACH") // "ACH", "WIRE", "CHECK", "CREDIT_CARD"
+  referenceNumber String   // Bank check#, Wire ref, Stripe trace
+  amount          Float
+  paymentDate     DateTime @default(now())
+  receivedFrom    String   // Shipper name or Client name
+  depositedToBank String   @default("Chase Operating Account")
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  allocations     PaymentAllocation[]
+}
+
+model PaymentAllocation {
+  id          String   @id @default(uuid())
+  paymentId   String
+  payment     Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount      Float
+  createdAt   DateTime @default(now())
+}
+
+model CarrierPayable {
+  id              String        @id @default(uuid())
+  payableNumber   String        @unique // e.g. "AP-2026-00101"
+  loadId          String
+  load            BrokerageLoad @relation(fields: [loadId], references: [id])
+  carrierId       String
+  carrier         Carrier       @relation(fields: [carrierId], references: [id])
+  
+  carrierInvoiceNo String       // Carrier's own invoice #
+  amountAgreed    Float         // Contracted rate confirmation amount
+  accessorialApproved Float     @default(0.0)
+  totalDue        Float
+  amountPaid      Float         @default(0.0)
+  balanceDue      Float
+  
+  status          String        @default("PENDING_AUDIT") // "PENDING_AUDIT", "APPROVED_FOR_PAYMENT", "PAID", "DISPUTED"
+  dueDate         DateTime
+  paymentDate     DateTime?
+  paymentReference String?
+  paymentMethod   String?       // "ACH", "QUICKPAY_CHECK", "WIRE"
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([carrierId, status])
+}
+
+// -------------------------------------------------------------
+// 10. EXPENSES & COMMISSIONS
+// -------------------------------------------------------------
+model Expense {
+  id          String   @id @default(uuid())
+  expenseNo   String   @unique // e.g. "EXP-2026-001"
+  category    String   // "SOFTWARE", "OFFICE_RENT", "INSURANCE", "MARKETING", "UTILITIES", "TRAVEL"
+  vendor      String
+  description String
+  amount      Float
+  expenseDate DateTime
+  paymentMethod String @default("CORPORATE_CARD")
+  receiptUrl  String?
+  status      String   @default("APPROVED") // "PENDING", "APPROVED", "REJECTED"
+  createdById String
+  createdBy   User     @relation("ExpenseSubmitter", fields: [createdById], references: [id])
+  approvedById String?
+  approvedBy  User?    @relation("ExpenseApprover", fields: [approvedById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CommissionPlan {
+  id          String   @id @default(uuid())
+  name        String   // "Sales Agent Standard (10% Margin)", "Dispatcher Incentive (5% Fee)"
+  role        String   // "SALES_AGENT", "DISPATCHER"
+  division    String   // "BROKERAGE", "DISPATCH"
+  percentage  Float    // e.g. 10.0% or 5.0%
+  triggerEvent String  @default("ON_INVOICE_PAID") // "ON_LOAD_DELIVERED", "ON_INVOICE_SENT", "ON_INVOICE_PAID"
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  commissions Commission[]
+}
+
+model Commission {
+  id              String          @id @default(uuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId          String?
+  plan            CommissionPlan? @relation(fields: [planId], references: [id])
+  division        String          // "BROKERAGE", "DISPATCH"
+  
+  brokerageLoadId String?
+  brokerageLoad   BrokerageLoad?  @relation(fields: [brokerageLoadId], references: [id])
+  dispatchLoadId  String?
+  dispatchLoad    DispatchLoad?   @relation(fields: [dispatchLoadId], references: [id])
+  
+  baseAmount      Float           // Margin amount or Dispatch fee amount
+  commissionRate  Float           // e.g. 10.0%
+  earnedAmount    Float           // baseAmount * rate
+  
+  status          String          @default("PENDING") // "PENDING", "APPROVED", "PAID", "CANCELLED"
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  payoutRef       String?
+  notes           String?
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([userId, status])
+}
+
+// -------------------------------------------------------------
+// 11. TASKS, NOTIFICATIONS, AUDIT & DOCUMENTS
+// -------------------------------------------------------------
+model Task {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  priority    String   @default("MEDIUM") // "LOW", "MEDIUM", "HIGH", "URGENT"
+  status      String   @default("TODO")   // "TODO", "IN_PROGRESS", "COMPLETED", "CANCELLED"
+  dueDate     DateTime?
+  assigneeId  String
+  assignee    User     @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User     @relation("TaskCreator", fields: [createdById], references: [id])
+  relatedType String?  // "LOAD", "QUOTE", "CUSTOMER", "CARRIER"
+  relatedId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([assigneeId, status])
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  type        String   @default("INFO") // "INFO", "SUCCESS", "WARNING", "ALERT"
+  link        String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  actorName   String   @default("System")
+  action      String   // "CREATE", "UPDATE", "DELETE", "LOGIN", "STATUS_CHANGE", "RATE_CHANGE", "PAYMENT_RECORDED"
+  entity      String   // "BrokerageLoad", "Quote", "Invoice", "Attendance", "User"
+  entityId    String?
+  oldValue    String?  // JSON string
+  newValue    String?  // JSON string
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+}

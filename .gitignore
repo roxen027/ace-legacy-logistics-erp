@@ -1,0 +1,40 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Next.js Build Outputs
+/.next/
+/out/
+
+# Environment Variables & Secrets (CRITICAL: Never commit .env with API keys)
+.env
+.env*.local
+!.env.example
+
+# SQLite Database Files
+prisma/*.db
+prisma/*.db-journal
+
+# Uploads & Temporary Media
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
